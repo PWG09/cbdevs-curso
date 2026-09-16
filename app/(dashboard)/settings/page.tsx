@@ -1,0 +1,1 @@
+import Guard from "@/components/Guard"; export default function Settings(){return <Guard roles={["admin"]}><section className="card"><h1 className="title">Configuración</h1><p className="muted">La gestión global de usuarios y configuración permanece en cbdevs-admin.</p></section></Guard>}
