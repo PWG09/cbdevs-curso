@@ -1,30 +1,347 @@
 rules_version = '2';
+
 service cloud.firestore {
- match /databases/{database}/documents {
-  function signedIn(){return request.auth!=null;}
-  function me(){return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;}
-  function active(){return signedIn() && me().active==true;}
-  function admin(){return active() && me().role=="admin";}
-  function employee(){return active() && me().role=="empleado";}
-  function staff(){return admin()||employee();}
-  function enrolled(courseId){return active() && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid+"_"+courseId)) && get(/databases/$(database)/documents/enrollments/$(request.auth.uid+"_"+courseId)).data.active==true;}
-  function courseAccess(courseId){return staff()||enrolled(courseId);}
-  match /users/{uid}{
-   allow read: if signedIn()&&(uid==request.auth.uid||admin());
-   allow create: if signedIn()&&uid==request.auth.uid&&request.resource.data.role=="cliente"&&request.resource.data.active==true&&request.resource.data.email==request.auth.token.email;
-   allow update: if admin() || (active()&&uid==request.auth.uid&&request.resource.data.role==resource.data.role&&request.resource.data.active==resource.data.active&&request.resource.data.email==resource.data.email);
-   allow delete:false;
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // AUTH / ROLES
+    // =========================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isActive() {
+      return signedIn()
+        && me().active == true;
+    }
+
+    function isAdmin() {
+      return isActive()
+        && me().role == "admin";
+    }
+
+    function isEmployee() {
+      return isActive()
+        && me().role == "empleado";
+    }
+
+    function isStaff() {
+      return isAdmin() || isEmployee();
+    }
+
+
+    // =========================================================
+    // COURSE ACCESS
+    // =========================================================
+
+    function isEnrolled(courseId) {
+      return isActive()
+        && exists(
+          /databases/$(database)/documents/enrollments/$(request.auth.uid + "_" + courseId)
+        )
+        && get(
+          /databases/$(database)/documents/enrollments/$(request.auth.uid + "_" + courseId)
+        ).data.active == true;
+    }
+
+    function canAccessCourse(courseId) {
+      return isStaff() || isEnrolled(courseId);
+    }
+
+
+    // =========================================================
+    // USERS
+    // =========================================================
+
+    match /users/{userId} {
+
+      allow read: if signedIn()
+        && (
+          userId == request.auth.uid
+          || isStaff()
+        );
+
+      // Only a new client can create their own profile.
+      allow create: if signedIn()
+        && userId == request.auth.uid
+        && request.resource.data.role == "cliente"
+        && request.resource.data.active == true
+        && request.resource.data.email == request.auth.token.email;
+
+      // Admin can modify users.
+      //
+      // Users can modify their own profile without changing
+      // role, active status or email.
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && userId == request.auth.uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.active == resource.data.active
+          && request.resource.data.email == resource.data.email
+        );
+
+      allow delete: if false;
+    }
+
+
+    // =========================================================
+    // EXISTING CBDEVS-ADMIN
+    // =========================================================
+
+    match /projects/{projectId} {
+
+      allow read: if isActive();
+
+      allow create: if isActive();
+
+      allow update: if isActive();
+
+      allow delete: if isAdmin();
+    }
+
+
+    match /messages/{messageId} {
+
+      allow read: if isActive();
+
+      allow create: if isActive()
+        && request.resource.data["senderId"] == request.auth.uid
+        && request.resource.data["text"] != "";
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && resource.data["senderId"] == request.auth.uid
+        );
+
+      allow delete: if isAdmin()
+        || (
+          isActive()
+          && resource.data["senderId"] == request.auth.uid
+        );
+    }
+
+
+    match /channels/{channelId} {
+
+      allow read: if isActive();
+
+      allow create: if isAdmin();
+
+      allow update: if isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+
+    match /inquiries/{inquiryId} {
+
+      allow create: if
+        request.resource.data.keys().hasAll([
+          "name",
+          "email",
+          "details",
+          "service",
+          "createdAt"
+        ])
+        && request.resource.data.keys().hasOnly([
+          "name",
+          "email",
+          "details",
+          "service",
+          "createdAt"
+        ])
+        && request.resource.data["name"] != ""
+        && request.resource.data["email"] != ""
+        && request.resource.data["details"] != ""
+        && request.resource.data["service"] != "";
+
+      allow read: if false;
+
+      allow update: if false;
+
+      allow delete: if false;
+    }
+
+
+    match /clients/{uid} {
+
+      allow read: if signedIn()
+        && request.auth.uid == uid;
+
+      allow write: if false;
+    }
+
+
+    match /payments/{paymentId} {
+
+      allow read: if signedIn()
+        && resource.data.metadata.clientUid == request.auth.uid;
+
+      allow write: if false;
+    }
+
+
+    match /payment_links/{linkId} {
+
+      allow read: if false;
+
+      allow write: if false;
+    }
+
+
+    // =========================================================
+    // COURSES
+    // =========================================================
+
+    match /courses/{courseId} {
+
+      // Staff can access all courses.
+      // Clients can only access enrolled courses.
+      allow read: if canAccessCourse(courseId);
+
+      // Admin / employee can create courses.
+      allow create: if isStaff()
+        && request.resource.data["createdBy"] == request.auth.uid;
+
+      // Admin / employee can edit courses.
+      allow update: if isStaff();
+
+      // Only admin can delete courses.
+      allow delete: if isAdmin();
+
+
+      // =======================================================
+      // PHASES
+      // =======================================================
+
+      match /phases/{phaseId} {
+
+        allow read: if canAccessCourse(courseId);
+
+        allow create: if isStaff();
+
+        allow update: if isStaff();
+
+        allow delete: if isStaff();
+
+
+        // =====================================================
+        // LESSONS
+        // =====================================================
+
+        match /lessons/{lessonId} {
+
+          allow read: if canAccessCourse(courseId);
+
+          allow create: if isStaff();
+
+          allow update: if isStaff();
+
+          allow delete: if isStaff();
+
+
+          // ===================================================
+          // EXERCISE SOLUTIONS
+          // ===================================================
+
+          match /solutions/{solutionId} {
+
+            allow read: if isStaff()
+              || (
+                isActive()
+                && isEnrolled(courseId)
+                && resource.data["released"] == true
+              );
+
+            allow create: if isStaff();
+
+            allow update: if isStaff();
+
+            allow delete: if isStaff();
+          }
+        }
+      }
+    }
+
+
+    // =========================================================
+    // ENROLLMENTS
+    // =========================================================
+
+    match /enrollments/{enrollmentId} {
+
+      // Staff can view enrollments.
+      // Client can view their own enrollment.
+      allow read: if isStaff()
+        || (
+          isActive()
+          && resource.data["userId"] == request.auth.uid
+        );
+
+      // Only admin can create enrollments.
+      allow create: if isAdmin()
+        && request.resource.data["userId"] != ""
+        && request.resource.data["courseId"] != ""
+        && request.resource.data["active"] == true;
+
+      allow update: if isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // PROGRESS
+    // =========================================================
+
+    match /progress/{progressId} {
+
+      // Staff can see all progress.
+      // Client can see their own progress.
+      allow read: if isStaff()
+        || (
+          isActive()
+          && resource.data["userId"] == request.auth.uid
+          && isEnrolled(resource.data["courseId"])
+        );
+
+      // Client creates own progress.
+      allow create: if isActive()
+        && request.resource.data["userId"] == request.auth.uid
+        && request.resource.data["courseId"] != ""
+        && request.resource.data["phaseId"] != ""
+        && request.resource.data["lessonId"] != ""
+        && isEnrolled(request.resource.data["courseId"]);
+
+      // Client updates own progress.
+      allow update: if isActive()
+        && resource.data["userId"] == request.auth.uid
+        && request.resource.data["userId"] == request.auth.uid
+        && request.resource.data["courseId"] == resource.data["courseId"]
+        && request.resource.data["phaseId"] == resource.data["phaseId"]
+        && request.resource.data["lessonId"] == resource.data["lessonId"]
+        && isEnrolled(resource.data["courseId"]);
+
+      // Only admin can delete progress.
+      allow delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // DEFAULT DENY
+    // =========================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
-  match /projects/{id}{allow read,create,update:if active();allow delete:if admin();}
-  match /messages/{id}{allow read:if active();allow create:if active()&&request.resource.data.senderId==request.auth.uid&&request.resource.data.text!=null;allow update,delete:if admin()||(active()&&resource.data.senderId==request.auth.uid);}
-  match /channels/{id}{allow read:if active();allow create,update,delete:if admin();}
-  match /inquiries/{id}{allow create:if request.resource.data.name!=null&&request.resource.data.email!=null&&request.resource.data.details!=null&&request.resource.data.service!=null;allow read,update,delete:false;}
-  match /clients/{uid}{allow read:if signedIn()&&request.auth.uid==uid;allow write:false;}
-  match /payments/{id}{allow read:if signedIn()&&resource.data.metadata.clientUid==request.auth.uid;allow write:false;}
-  match /payment_links/{id}{allow read,write:false;}
-  match /courses/{courseId}{allow read:if courseAccess(courseId);allow create:if staff()&&request.resource.data.createdBy==request.auth.uid;allow update:if staff();allow delete:if admin();match /phases/{phaseId}{allow read:if courseAccess(courseId);allow create,update,delete:if staff();match /lessons/{lessonId}{allow read:if courseAccess(courseId);allow create,update,delete:if staff();}}
-  match /enrollments/{id}{allow read:if staff()||(active()&&resource.data.userId==request.auth.uid);allow create:if staff();allow update:if staff();allow delete:if admin();}
-  match /progress/{id}{allow read:if staff()||(active()&&resource.data.userId==request.auth.uid&&enrolled(resource.data.courseId));allow create:if active()&&request.resource.data.userId==request.auth.uid&&enrolled(request.resource.data.courseId);allow update:if active()&&resource.data.userId==request.auth.uid&&request.resource.data.userId==request.auth.uid&&resource.data.courseId==request.resource.data.courseId;allow delete:if admin();}
-  match /{document=**}{allow read,write:false;}
- }
 }

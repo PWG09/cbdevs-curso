@@ -1,0 +1,1 @@
+import {doc,updateDoc} from "firebase/firestore"; import {db} from "@/lib/firebase/client"; export async function updateLessonOrder(courseId:string,phaseId:string,lessonId:string,order:number){await updateDoc(doc(db,"courses",courseId,"phases",phaseId,"lessons",lessonId),{order});}

@@ -1,6 +1,7 @@
 node_modules
 .next
 out
-.env*
-!.env.example
-npm-debug.log*
+.env
+.env.local
+.firebase
+firebase-debug.log
