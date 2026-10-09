@@ -15,6 +15,6 @@ export async function listClients():Promise<AppUser[]>{
  const organizationId=await getCurrentOrganization("courses");
  const {data:enrollments,error}=await db().from("cbdevs_course_enrollments").select("user_id").eq("organization_id",organizationId).eq("active",true);if(error)throw error;
  const ids=[...new Set((enrollments||[]).map(r=>r.user_id))];if(!ids.length)return[];
- const {data:profiles,error:profileError}=await db().from("profiles").select("id,display_name,avatar_url,created_at").in("id",ids);if(profileError)throw profileError;
+ const {data:profiles,error:profileError}=await db().from("profiles").select("id,display_name,avatar_url,email,created_at").in("id",ids);if(profileError)throw profileError;
  return (profiles||[]).map(p=>({id:p.id,name:p.display_name||"Alumno",email:p.email||"",role:"cliente",active:true,createdAt:p.created_at,organizationId}));
 }
