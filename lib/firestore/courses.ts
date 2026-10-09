@@ -1,37 +1,34 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, updateDoc, setDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase/client"; import type {Course,ExerciseSolution,Lesson,LessonBlock,Phase} from "@/types/course";
-const courseRef=(id:string)=>doc(db,"courses",id); const phasesRef=(id:string)=>collection(db,"courses",id,"phases");
-export async function listCourses(){const s=await getDocs(query(collection(db,"courses"),orderBy("title")));return s.docs.map(d=>({id:d.id,...d.data()} as Course));}
-export async function getCourse(id:string){const s=await getDoc(courseRef(id));return s.exists()?({id:s.id,...s.data()} as Course):null;}
-export async function createCourse(data:Omit<Course,"id"|"createdAt"|"updatedAt">){const clean={title:data.title.trim(),description:data.description?.trim()||"",price:Number.isFinite(data.price)?data.price:0,thumbnail:data.thumbnail||"",published:Boolean(data.published),createdBy:data.createdBy};return (await addDoc(collection(db,"courses"),{...clean,createdAt:serverTimestamp(),updatedAt:serverTimestamp()})).id;}
-export async function updateCourse(id:string,data:Partial<Course>){await updateDoc(courseRef(id),{...data,updatedAt:serverTimestamp()});}
-export async function deleteCourse(id:string){
-  const phases=await getDocs(phasesRef(id));
-  for(const ph of phases.docs){
-    const lessons=await getDocs(collection(ph.ref,"lessons"));
-    for(const lesson of lessons.docs){
-      const solutions=await getDocs(collection(lesson.ref,"solutions"));
-      for(const sol of solutions.docs) await deleteDoc(sol.ref);
-      await deleteDoc(lesson.ref);
-    }
-    await deleteDoc(ph.ref);
-  }
-  await deleteDoc(courseRef(id));
+import { getSupabaseClient, getCurrentOrganization } from "@/lib/supabase/client";
+import type { Course, ExerciseSolution, Lesson, Phase } from "@/types/course";
+
+const db=()=>getSupabaseClient();
+async function organizationForCourse(courseId:string){const {data,error}=await db().from("cbdevs_courses").select("organization_id").eq("id",courseId).single();if(error||!data)throw new Error("Curso no encontrado.");return data.organization_id;}
+const courseFrom=(r:any):Course=>({id:r.id,title:r.title,description:r.description||"",price:Number(r.price||0),thumbnail:r.thumbnail||"",published:Boolean(r.published),createdBy:r.created_by,createdAt:r.created_at,updatedAt:r.updated_at});
+async function resolveThumbnail(course:Course):Promise<Course>{
+ if(!course.thumbnail||/^https?:\/\//i.test(course.thumbnail))return course;
+ const {data,error}=await db().storage.from("cbdevs-course-assets").createSignedUrl(course.thumbnail,3600);
+ return {...course,thumbnail:error?"":data?.signedUrl||""};
 }
-export async function listPhases(courseId:string){const s=await getDocs(query(phasesRef(courseId),orderBy("order")));return s.docs.map(d=>({id:d.id,courseId,...d.data()} as Phase));}
-export async function createPhase(courseId:string,data:Omit<Phase,"id"|"courseId">){return (await addDoc(phasesRef(courseId),{...data,title:data.title.trim(),description:data.description?.trim()||""})).id;}
-export async function updatePhase(courseId:string,id:string,data:Partial<Phase>){await updateDoc(doc(db,"courses",courseId,"phases",id),data);}
-export async function deletePhase(courseId:string,id:string){
-  const phaseRef=doc(db,"courses",courseId,"phases",id); const lessons=await getDocs(collection(phaseRef,"lessons"));
-  for(const lesson of lessons.docs){const solutions=await getDocs(collection(lesson.ref,"solutions"));for(const sol of solutions.docs)await deleteDoc(sol.ref);await deleteDoc(lesson.ref);}
-  await deleteDoc(phaseRef);
+const phaseFrom=(r:any,courseId:string):Phase=>({id:r.id,courseId,title:r.title,description:r.description||"",order:r.sort_order});
+const lessonFrom=(r:any,courseId:string,phaseId:string):Lesson=>({id:r.id,courseId,phaseId,title:r.title,description:r.description||"",order:r.sort_order,blocks:Array.isArray(r.blocks)?r.blocks:[],updatedAt:r.updated_at});
+
+export async function listCourses(){const {data,error}=await db().from("cbdevs_courses").select("*").order("title");if(error)throw error;return Promise.all((data||[]).map(r=>resolveThumbnail(courseFrom(r))));}
+export async function getCourse(id:string){const {data,error}=await db().from("cbdevs_courses").select("*").eq("id",id).maybeSingle();if(error)throw error;return data?resolveThumbnail(courseFrom(data)):null;}
+export async function createCourse(data:Omit<Course,"id"|"createdAt"|"updatedAt">){
+ const organization_id=await getCurrentOrganization("courses");const {data:{user},error:authError}=await db().auth.getUser();if(authError||!user)throw new Error("Inicia sesión.");
+ const {data:row,error}=await db().from("cbdevs_courses").insert({organization_id,title:data.title.trim(),description:data.description?.trim()||"",price:Number.isFinite(data.price)?data.price:0,thumbnail:data.thumbnail||null,published:Boolean(data.published),created_by:user.id}).select("id").single();if(error)throw error;return row.id;
 }
-export async function listLessons(courseId:string,phaseId:string){const s=await getDocs(query(collection(db,"courses",courseId,"phases",phaseId,"lessons"),orderBy("order")));return s.docs.map(d=>({id:d.id,courseId,phaseId,...d.data()} as Lesson));}
-export async function createLesson(courseId:string,phaseId:string,data:Omit<Lesson,"id"|"courseId"|"phaseId">){return (await addDoc(collection(db,"courses",courseId,"phases",phaseId,"lessons"),{...data,title:data.title.trim(),description:data.description?.trim()||"",blocks:data.blocks||[],updatedAt:serverTimestamp()})).id;}
-export async function getLesson(courseId:string,phaseId:string,id:string){const s=await getDoc(doc(db,"courses",courseId,"phases",phaseId,"lessons",id));return s.exists()?({id:s.id,courseId,phaseId,...s.data()} as Lesson):null;}
-export async function saveLesson(courseId:string,phaseId:string,id:string,data:Partial<Lesson>){await updateDoc(doc(db,"courses",courseId,"phases",phaseId,"lessons",id),{...data,updatedAt:serverTimestamp()});}
-export async function deleteLesson(courseId:string,phaseId:string,id:string){const r=doc(db,"courses",courseId,"phases",phaseId,"lessons",id);const sols=await getDocs(collection(r,"solutions"));for(const sol of sols.docs)await deleteDoc(sol.ref);await deleteDoc(r);}
-const solutionsRef=(courseId:string,phaseId:string,lessonId:string)=>collection(db,"courses",courseId,"phases",phaseId,"lessons",lessonId,"solutions");
-export async function getExerciseSolutions(courseId:string,phaseId:string,lessonId:string){const s=await getDocs(solutionsRef(courseId,phaseId,lessonId));return Object.fromEntries(s.docs.map(d=>[d.id,{id:d.id,...d.data()} as ExerciseSolution]));}
-export async function getExerciseSolution(courseId:string,phaseId:string,lessonId:string,blockId:string){const s=await getDoc(doc(solutionsRef(courseId,phaseId,lessonId),blockId));return s.exists()?({id:s.id,...s.data()} as ExerciseSolution):null;}
-export async function saveExerciseSolution(courseId:string,phaseId:string,lessonId:string,blockId:string,code:string,released:boolean){await setDoc(doc(solutionsRef(courseId,phaseId,lessonId),blockId),{code,released,updatedAt:serverTimestamp()},{merge:true});}
+export async function updateCourse(id:string,data:Partial<Course>){const patch:any={};if(data.title!==undefined)patch.title=data.title.trim();if(data.description!==undefined)patch.description=data.description.trim();if(data.price!==undefined)patch.price=data.price;if(data.thumbnail!==undefined)patch.thumbnail=data.thumbnail;if(data.published!==undefined)patch.published=data.published;patch.updated_at=new Date().toISOString();const {error}=await db().from("cbdevs_courses").update(patch).eq("id",id);if(error)throw error;}
+export async function deleteCourse(id:string){const {error}=await db().from("cbdevs_courses").delete().eq("id",id);if(error)throw error;}
+export async function listPhases(courseId:string){const {data,error}=await db().from("cbdevs_course_phases").select("*").eq("course_id",courseId).order("sort_order");if(error)throw error;return(data||[]).map(r=>phaseFrom(r,courseId));}
+export async function createPhase(courseId:string,data:Omit<Phase,"id"|"courseId">){const course=await getCourse(courseId);if(!course)throw new Error("Curso no encontrado.");const {data:row,error}=await db().from("cbdevs_course_phases").insert({organization_id:await organizationForCourse(courseId),course_id:courseId,title:data.title.trim(),description:data.description?.trim()||"",sort_order:data.order}).select("id").single();if(error)throw error;return row.id;}
+export async function updatePhase(courseId:string,id:string,data:Partial<Phase>){const patch:any={};if(data.title!==undefined)patch.title=data.title.trim();if(data.description!==undefined)patch.description=data.description.trim();if(data.order!==undefined)patch.sort_order=data.order;const {error}=await db().from("cbdevs_course_phases").update(patch).eq("id",id).eq("course_id",courseId);if(error)throw error;}
+export async function deletePhase(courseId:string,id:string){const {error}=await db().from("cbdevs_course_phases").delete().eq("id",id).eq("course_id",courseId);if(error)throw error;}
+export async function listLessons(courseId:string,phaseId:string){const {data,error}=await db().from("cbdevs_course_lessons").select("*").eq("course_id",courseId).eq("phase_id",phaseId).order("sort_order");if(error)throw error;return(data||[]).map(r=>lessonFrom(r,courseId,phaseId));}
+export async function createLesson(courseId:string,phaseId:string,data:Omit<Lesson,"id"|"courseId"|"phaseId">){const {data:row,error}=await db().from("cbdevs_course_lessons").insert({organization_id:await organizationForCourse(courseId),course_id:courseId,phase_id:phaseId,title:data.title.trim(),description:data.description?.trim()||"",sort_order:data.order,blocks:data.blocks||[]}).select("id").single();if(error)throw error;return row.id;}
+export async function getLesson(courseId:string,phaseId:string,id:string){const {data,error}=await db().from("cbdevs_course_lessons").select("*").eq("id",id).eq("course_id",courseId).eq("phase_id",phaseId).maybeSingle();if(error)throw error;return data?lessonFrom(data,courseId,phaseId):null;}
+export async function saveLesson(courseId:string,phaseId:string,id:string,data:Partial<Lesson>){const patch:any={updated_at:new Date().toISOString()};if(data.title!==undefined)patch.title=data.title.trim();if(data.description!==undefined)patch.description=data.description.trim();if(data.order!==undefined)patch.sort_order=data.order;if(data.blocks!==undefined)patch.blocks=data.blocks;const {error}=await db().from("cbdevs_course_lessons").update(patch).eq("id",id).eq("course_id",courseId).eq("phase_id",phaseId);if(error)throw error;}
+export async function deleteLesson(courseId:string,phaseId:string,id:string){const {error}=await db().from("cbdevs_course_lessons").delete().eq("id",id).eq("course_id",courseId).eq("phase_id",phaseId);if(error)throw error;}
+export async function getExerciseSolutions(courseId:string,phaseId:string,lessonId:string){const {data,error}=await db().from("cbdevs_exercise_solutions").select("*").eq("course_id",courseId).eq("phase_id",phaseId).eq("lesson_id",lessonId);if(error)throw error;return Object.fromEntries((data||[]).map(r=>[r.block_id,{id:r.block_id,code:r.code,released:r.released,updatedAt:r.updated_at} as ExerciseSolution]));}
+export async function getExerciseSolution(courseId:string,phaseId:string,lessonId:string,blockId:string){const {data,error}=await db().from("cbdevs_exercise_solutions").select("*").eq("course_id",courseId).eq("phase_id",phaseId).eq("lesson_id",lessonId).eq("block_id",blockId).maybeSingle();if(error)throw error;return data?({id:data.block_id,code:data.code,released:data.released,updatedAt:data.updated_at} as ExerciseSolution):null;}
+export async function saveExerciseSolution(courseId:string,phaseId:string,lessonId:string,blockId:string,code:string,released:boolean){const {data:{user},error:authError}=await db().auth.getUser();if(authError||!user)throw new Error("Inicia sesión.");const {error}=await db().from("cbdevs_exercise_solutions").upsert({organization_id:await organizationForCourse(courseId),course_id:courseId,phase_id:phaseId,lesson_id:lessonId,block_id:blockId,code,released,updated_by:user.id,updated_at:new Date().toISOString()},{onConflict:"lesson_id,block_id"});if(error)throw error;}
