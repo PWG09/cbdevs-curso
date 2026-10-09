@@ -1,7 +1,7 @@
 import {getSupabaseClient,getCurrentOrganization} from "@/lib/supabase/client";import type {AppUser} from "@/types/course";
 const db=()=>getSupabaseClient();
 async function profile(uid:string):Promise<AppUser|null>{
- const {data:p,error}=await db().from("profiles").select("id,display_name,avatar_url,created_at").eq("id",uid).maybeSingle();if(error)throw error;if(!p)return null;
+ const {data:p,error}=await db().from("profiles").select("id,display_name,avatar_url,email,created_at").eq("id",uid).maybeSingle();if(error)throw error;if(!p)return null;
  const {data:memberships}=await db().from("organization_members").select("organization_id,role,status").eq("user_id",uid).eq("status","active");
  let role:AppUser["role"]="cliente",organizationId:string|undefined;
  for(const m of memberships||[]){const {data:app}=await db().from("organization_apps").select("enabled").eq("organization_id",m.organization_id).eq("app_key","courses").maybeSingle();if(app?.enabled&&["owner","admin","manager"].includes(m.role)){role=m.role==="owner"||m.role==="admin"?"admin":"empleado";organizationId=m.organization_id;break;}}
