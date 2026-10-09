@@ -33,8 +33,8 @@ Course → Phases → Lessons → Blocks. Blocks support text, video, code, exer
 
 ## Migration status
 
-The central database schema and RLS policies have been applied to the verified central Supabase project. This branch changes the app code to use Supabase Auth, Postgres, and Storage, but it has **not yet been deployed or tested against production users**.
+The central Supabase schema and RLS policies are applied, and the Supabase-only Courses code is deployed to production. The production build passed after removing Firebase runtime dependencies and correcting migration build errors. Real authentication, email confirmation/recovery, course CRUD, uploads, and RLS/IDOR behavior still require end-to-end tests because the central project currently has no Auth users, organizations, or course records.
 
-Legacy Firebase data, course assets, enrollments, and user accounts have not been imported. Firebase project/rules are intentionally retained as a rollback source until the migration is validated. Do not delete Firebase resources or change production traffic before data export, account mapping, build tests, RLS/IDOR tests, and sign-in/confirmation/reset-flow tests pass.
+No Firebase users, course assets, enrollments, progress, or accounts were imported. Firebase SDK dependencies, config files, rules, and runtime imports were removed from this app. The old Firebase cloud project is left untouched as a separate rollback reference; it is not used by the deployed code.
 
 DetailFlow, QuoteSnap, and QuoteAI are explicitly excluded from this central project.
