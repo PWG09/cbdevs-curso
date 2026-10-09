@@ -3,11 +3,16 @@ import type { Course, ExerciseSolution, Lesson, Phase } from "@/types/course";
 
 const db=()=>getSupabaseClient();
 const courseFrom=(r:any):Course=>({id:r.id,title:r.title,description:r.description||"",price:Number(r.price||0),thumbnail:r.thumbnail||"",published:Boolean(r.published),createdBy:r.created_by,createdAt:r.created_at,updatedAt:r.updated_at});
+async function resolveThumbnail(course:Course):Promise<Course>{
+ if(!course.thumbnail||/^https?:\\/\\//i.test(course.thumbnail))return course;
+ const {data,error}=await db().storage.from("cbdevs-course-assets").createSignedUrl(course.thumbnail,3600);
+ return {...course,thumbnail:error?"":data?.signedUrl||""};
+}
 const phaseFrom=(r:any,courseId:string):Phase=>({id:r.id,courseId,title:r.title,description:r.description||"",order:r.sort_order});
 const lessonFrom=(r:any,courseId:string,phaseId:string):Lesson=>({id:r.id,courseId,phaseId,title:r.title,description:r.description||"",order:r.sort_order,blocks:Array.isArray(r.blocks)?r.blocks:[],updatedAt:r.updated_at});
 
-export async function listCourses(){const {data,error}=await db().from("cbdevs_courses").select("*").order("title");if(error)throw error;return(data||[]).map(courseFrom);}
-export async function getCourse(id:string){const {data,error}=await db().from("cbdevs_courses").select("*").eq("id",id).maybeSingle();if(error)throw error;return data?courseFrom(data):null;}
+export async function listCourses(){const {data,error}=await db().from("cbdevs_courses").select("*").order("title");if(error)throw error;return Promise.all((data||[]).map(r=>resolveThumbnail(courseFrom(r))));}
+export async function getCourse(id:string){const {data,error}=await db().from("cbdevs_courses").select("*").eq("id",id).maybeSingle();if(error)throw error;return data?resolveThumbnail(courseFrom(data)):null;}
 export async function createCourse(data:Omit<Course,"id"|"createdAt"|"updatedAt">){
  const organization_id=await getCurrentOrganization("courses");const {data:{user},error:authError}=await db().auth.getUser();if(authError||!user)throw new Error("Inicia sesión.");
  const {data:row,error}=await db().from("cbdevs_courses").insert({organization_id,title:data.title.trim(),description:data.description?.trim()||"",price:Number.isFinite(data.price)?data.price:0,thumbnail:data.thumbnail||null,published:Boolean(data.published),created_by:user.id}).select("id").single();if(error)throw error;return row.id;
