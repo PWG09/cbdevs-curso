@@ -60,7 +60,7 @@ export function AuthProvider({children}:{children:ReactNode}){
   });
   void supabase.auth.getUser().then(({data:{user}})=>{
     if(!mounted)return;
-    if(user){setFirebaseUser(user);void resolveUser(user).then(setAppUser).catch(()=>setAppUser(null)).finally(()=>setLoading(false))}
+    if(user){setFirebaseUser(Object.assign(user, { uid: user.id }));void resolveUser(user).then(setAppUser).catch(()=>setAppUser(null)).finally(()=>setLoading(false))}
     else setLoading(false);
   });
   return()=>{mounted=false;subscription.unsubscribe()};
@@ -82,6 +82,7 @@ export function AuthProvider({children}:{children:ReactNode}){
    const supabase=getSupabaseClient();
    const {data,error}=await supabase.auth.signUp({email:email.trim().toLowerCase(),password,options:{data:{display_name:name.trim(),name:name.trim()}}});
    if(error||!data.user)throw new Error(error?.message||"No se pudo crear la cuenta.");
+   if(!data.session)throw new Error("Cuenta creada. Revisa tu correo y confirma la cuenta antes de iniciar sesión.");
    const {error:profileError}=await supabase.from("profiles").update({display_name:name.trim()}).eq("id",data.user.id);
    if(profileError)throw new Error("La cuenta se creó, pero el perfil no se pudo completar. Intenta iniciar sesión o restablecer la contraseña.");
    const p=await resolveUser(data.user,name.trim());setAppUser(p);return p;
