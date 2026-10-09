@@ -14,7 +14,7 @@ export async function uploadCourseFile(file: File, path: string) {
   if (error) throw new Error("No se pudo subir el archivo. Verifica los permisos de almacenamiento.");
   const { data, error: signedError } = await supabase.storage.from(BUCKET).createSignedUrl(objectPath, 3600);
   if (signedError || !data?.signedUrl) throw new Error("El archivo se subió, pero no se pudo generar un enlace seguro.");
-  return { path: objectPath, url: data.signedUrl };
+  return { path: objectPath, url: objectPath };
 }
 
 export async function removeCourseFile(path: string) {
