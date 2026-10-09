@@ -1,37 +1,40 @@
-# CBDEVS Cursos V8
+# CBDEVS Cursos
 
-Plataforma de cursos grabados/estructurados para CBDEVS. Usa el mismo Firebase project que `cbdevs-admin` (`cbdev-a74dc`) y reutiliza exactamente `users/{uid}`.
+Plataforma de cursos estructurados de CBDEVS. Esta rama migra el acceso a datos y autenticación desde Firebase hacia el proyecto Supabase central compartido con CBDEVS Admin, Web y Client Portal.
+
+## Central Supabase
+
+- Project reference: `rpfupihdsqxprhptxypv`
+- Browser variables: `NEXT_PUBLIC_CBDEVS_SUPABASE_URL` and `NEXT_PUBLIC_CBDEVS_SUPABASE_ANON_KEY`
+- Use only the publishable/anon key in the browser. Never expose a service-role key.
+- Course tables: `cbdevs_courses`, `cbdevs_course_phases`, `cbdevs_course_lessons`, `cbdevs_exercise_solutions`, `cbdevs_course_enrollments`, `cbdevs_course_progress`.
+- Storage bucket: `cbdevs-course-assets` (private; signed URLs expire after one hour).
+
+Access is determined from Supabase Auth, organization membership, the enabled `courses` app, and active course enrollment. A signed-in user is not automatically staff. RLS enforces tenant boundaries.
 
 ## Roles
-- `admin`: administración de cursos, fases, lecciones, bloques e inscripciones; lectura de alumnos.
-- `empleado`: creación/edición de contenido y lectura de alumnos inscritos; no crea cuentas ni administra inscripciones.
-- `cliente`: único rol de auto-registro; solo puede abrir cursos con inscripción activa y guardar su propio progreso.
 
-Admin y empleado se crean exclusivamente desde `cbdevs-admin`. La app de cursos nunca crea esas cuentas.
+- `owner` / `admin`: mapped to the UI's `admin` role.
+- `manager`: mapped to the UI's `empleado` role.
+- Enrolled or newly registered learners: UI `cliente` role.
+- Public registration never grants staff privileges.
 
-## Auth
-- Email/password para los tres roles.
-- Google para los tres roles.
-- Un Google/email nuevo sin `users/{uid}` se provisiona automáticamente como `cliente` solo durante el flujo de registro/provisionamiento de cliente.
-- Un usuario existente sin documento `users/{uid}` no obtiene acceso hasta ser configurado desde `cbdevs-admin`.
-- Persistencia de sesión local del navegador.
-- Reset de contraseña por Firebase Auth.
+## Content
 
-## Contenido
-Curso → Fases → Lecciones → Bloques.
-Bloques: texto enriquecido, video YouTube/Vimeo, código, ejercicio, quiz y recurso descargable.
-Las soluciones de ejercicios se guardan en `solutions/{blockId}` y nunca se leen desde la cuenta cliente.
+Course → Phases → Lessons → Blocks. Blocks support text, video, code, exercises, quizzes, and downloadable resources. Exercise solutions are visible to course staff; learners only see solutions marked released.
 
-## Instalación
-1. Copia `.env.example` a `.env.local` y coloca únicamente las variables Web de Firebase.
-2. En Firebase Authentication habilita Email/Password y Google.
-3. En Firestore conserva las reglas de producción de `cbdevs-admin` y añade/mergea las reglas de cursos de `firestore.rules`. No borres condiciones existentes que no estén representadas aquí.
-4. Si usarás Storage para portadas/recursos, mergea `storage.rules` con tus reglas de Storage existentes.
-5. `npm install`
-6. `npm run dev`
+## Local setup
 
-## Índices
-Las consultas actuales usan ordenamiento/where simples. Si Firebase solicita un índice compuesto, el error de Firebase incluirá un enlace para crearlo; no se requiere Cloud Functions.
+1. Copy `.env.example` to `.env.local`.
+2. Set `NEXT_PUBLIC_CBDEVS_SUPABASE_URL=https://rpfupihdsqxprhptxypv.supabase.co`.
+3. Set `NEXT_PUBLIC_CBDEVS_SUPABASE_ANON_KEY` to the publishable/anon key from the central project.
+4. In Supabase Auth, configure the production site URL, local redirect URL, email confirmation, password recovery redirects, and Google OAuth only if Google login is enabled.
+5. Run `npm install`, `npm run dev`, and `npm run build`.
 
-## V1 excluye
-Pagos/Stripe, clases en vivo, Zoom/Meet, agenda, membresías, foro, certificados y code review.
+## Migration status
+
+The central database schema and RLS policies have been applied to the verified central Supabase project. This branch changes the app code to use Supabase Auth, Postgres, and Storage, but it has **not yet been deployed or tested against production users**.
+
+Legacy Firebase data, course assets, enrollments, and user accounts have not been imported. Firebase project/rules are intentionally retained as a rollback source until the migration is validated. Do not delete Firebase resources or change production traffic before data export, account mapping, build tests, RLS/IDOR tests, and sign-in/confirmation/reset-flow tests pass.
+
+DetailFlow, QuoteSnap, and QuoteAI are explicitly excluded from this central project.
