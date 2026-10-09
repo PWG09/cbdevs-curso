@@ -4,12 +4,13 @@ import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { AppUser } from "@/types/course";
 
+type CompatUser = User & { uid: string };
 type C = {
-  firebaseUser: User | null;
+  firebaseUser: CompatUser | null;
   appUser: AppUser | null;
   loading: boolean;
   login: (email:string,password:string)=>Promise<AppUser>;
-  loginGoogle: ()=>Promise<AppUser>;
+  loginGoogle: ()=>Promise<void>;
   register: (name:string,email:string,password:string)=>Promise<AppUser>;
   reset: (email:string)=>Promise<void>;
   logout: ()=>Promise<void>;
@@ -43,7 +44,7 @@ async function resolveUser(user:User, nameOverride=""):Promise<AppUser> {
 }
 
 export function AuthProvider({children}:{children:ReactNode}){
- const [firebaseUser,setFirebaseUser]=useState<User|null>(null);
+ const [firebaseUser,setFirebaseUser]=useState<CompatUser|null>(null);
  const [appUser,setAppUser]=useState<AppUser|null>(null);
  const [loading,setLoading]=useState(true);
  useEffect(()=>{
@@ -52,7 +53,7 @@ export function AuthProvider({children}:{children:ReactNode}){
   const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{
     const user=session?.user||null;
     if(!mounted)return;
-    setFirebaseUser(user);
+    setFirebaseUser(user ? Object.assign(user, { uid: user.id }) : null);
     if(!user){setAppUser(null);setLoading(false);return;}
     setLoading(true);
     queueMicrotask(()=>resolveUser(user).then(p=>{if(mounted)setAppUser(p)}).catch(()=>{if(mounted)setAppUser(null)}).finally(()=>{if(mounted)setLoading(false)}));
@@ -76,7 +77,6 @@ export function AuthProvider({children}:{children:ReactNode}){
    const supabase=getSupabaseClient();
    const {error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:typeof window!=="undefined"?window.location.origin+"/my-courses":undefined}});
    if(error)throw new Error("No se pudo iniciar sesión con Google. Revisa la configuración del proveedor en Supabase.");
-   throw new Error("Completa el inicio de sesión con Google en la ventana abierta.");
   },
   register:async(name,email,password)=>{
    const supabase=getSupabaseClient();
