@@ -4,9 +4,9 @@ import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { AppUser } from "@/types/course";
 
-type CompatUser = User & { uid: string };
+
 type C = {
-  firebaseUser: CompatUser | null;
+  authUser: User | null;
   appUser: AppUser | null;
   loading: boolean;
   login: (email:string,password:string)=>Promise<AppUser>;
@@ -44,7 +44,7 @@ async function resolveUser(user:User, nameOverride=""):Promise<AppUser> {
 }
 
 export function AuthProvider({children}:{children:ReactNode}){
- const [firebaseUser,setFirebaseUser]=useState<CompatUser|null>(null);
+ const [authUser,setAuthUser]=useState<User|null>(null);
  const [appUser,setAppUser]=useState<AppUser|null>(null);
  const [loading,setLoading]=useState(true);
  useEffect(()=>{
@@ -53,20 +53,20 @@ export function AuthProvider({children}:{children:ReactNode}){
   const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{
     const user=session?.user||null;
     if(!mounted)return;
-    setFirebaseUser(user ? Object.assign(user, { uid: user.id }) : null);
+    setAuthUser(user);
     if(!user){setAppUser(null);setLoading(false);return;}
     setLoading(true);
     queueMicrotask(()=>resolveUser(user).then(p=>{if(mounted)setAppUser(p)}).catch(()=>{if(mounted)setAppUser(null)}).finally(()=>{if(mounted)setLoading(false)}));
   });
   void supabase.auth.getUser().then(({data:{user}})=>{
     if(!mounted)return;
-    if(user){setFirebaseUser(Object.assign(user, { uid: user.id }));void resolveUser(user).then(setAppUser).catch(()=>setAppUser(null)).finally(()=>setLoading(false))}
+    if(user){setAuthUser(user);void resolveUser(user).then(setAppUser).catch(()=>setAppUser(null)).finally(()=>setLoading(false))}
     else setLoading(false);
   });
   return()=>{mounted=false;subscription.unsubscribe()};
  },[]);
  const value=useMemo<C>(()=>({
-  firebaseUser,appUser,loading,
+  authUser,appUser,loading,
   login:async(email,password)=>{
    const supabase=getSupabaseClient();
    const {data,error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
@@ -94,7 +94,7 @@ export function AuthProvider({children}:{children:ReactNode}){
   },
   logout:async()=>{const {error}=await getSupabaseClient().auth.signOut();if(error)throw error;setAppUser(null)},
   refreshUser:async()=>{const {data:{user}}=await getSupabaseClient().auth.getUser();if(!user){setAppUser(null);return null;}const p=await resolveUser(user);setAppUser(p);return p}
- }),[firebaseUser,appUser,loading]);
+ }),[authUser,appUser,loading]);
  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 export function useAuth(){const c=useContext(AuthContext);if(!c)throw new Error("useAuth must be used inside AuthProvider");return c;}
