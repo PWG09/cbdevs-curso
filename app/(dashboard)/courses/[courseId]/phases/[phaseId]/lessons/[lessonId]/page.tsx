@@ -2,14 +2,14 @@
 import { useEffect, useRef, useState } from "react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
-import "prismjs/components/prism-javascript"; import "prismjs/components/prism-typescript"; import "prismjs/components/prism-markup"; import "prismjs/components/prism-css"; import "prismjs/components/prism-json"; import "prismjs/components/prism-python"; import "prismjs/components/prism-bash"; import "prismjs/components/prism-sql"; import Link from "next/link"; import { useParams } from "next/navigation"; import Guard from "@/components/Guard"; import { getExerciseSolutions, getLesson, saveExerciseSolution, saveLesson } from "@/lib/firestore/courses"; import { uploadCourseFile } from "@/lib/firebase/storage"; import type { ExerciseSolution, Lesson, LessonBlock, LessonBlockType } from "@/types/course";
+import "prismjs/components/prism-javascript"; import "prismjs/components/prism-typescript"; import "prismjs/components/prism-markup"; import "prismjs/components/prism-css"; import "prismjs/components/prism-json"; import "prismjs/components/prism-python"; import "prismjs/components/prism-bash"; import "prismjs/components/prism-sql"; import Link from "next/link"; import { useParams } from "next/navigation"; import Guard from "@/components/Guard"; import { getExerciseSolutions, getLesson, saveExerciseSolution, saveLesson } from "@/lib/firestore/courses"; import { uploadCourseFile } from "@/lib/supabase/storage"; import type { ExerciseSolution, Lesson, LessonBlock, LessonBlockType } from "@/types/course";
 const labels: Record<LessonBlockType, string> = { text: "Texto", video: "Video", code: "Código", exercise: "Ejercicio", quiz: "Quiz", download: "Recurso descargable" };
 function createId() {
   if (
     typeof crypto !== "undefined" &&
     typeof crypto.randomUUID === "function"
   ) {
-    return createId();
+    return crypto.randomUUID();
   }
 
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
