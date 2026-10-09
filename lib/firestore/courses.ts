@@ -5,7 +5,7 @@ const db=()=>getSupabaseClient();
 async function organizationForCourse(courseId:string){const {data,error}=await db().from("cbdevs_courses").select("organization_id").eq("id",courseId).single();if(error||!data)throw new Error("Curso no encontrado.");return data.organization_id;}
 const courseFrom=(r:any):Course=>({id:r.id,title:r.title,description:r.description||"",price:Number(r.price||0),thumbnail:r.thumbnail||"",published:Boolean(r.published),createdBy:r.created_by,createdAt:r.created_at,updatedAt:r.updated_at});
 async function resolveThumbnail(course:Course):Promise<Course>{
- if(!course.thumbnail||/^https?:\\/\\//i.test(course.thumbnail))return course;
+ if(!course.thumbnail||/^https?:\/\//i.test(course.thumbnail))return course;
  const {data,error}=await db().storage.from("cbdevs-course-assets").createSignedUrl(course.thumbnail,3600);
  return {...course,thumbnail:error?"":data?.signedUrl||""};
 }
