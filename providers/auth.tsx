@@ -80,7 +80,7 @@ export function AuthProvider({children}:{children:ReactNode}){
   },
   register:async(name,email,password)=>{
    const supabase=getSupabaseClient();
-   const {data,error}=await supabase.auth.signUp({email:email.trim().toLowerCase(),password,options:{data:{display_name:name.trim(),name:name.trim()}}});
+   const {data,error}=await supabase.auth.signUp({email:email.trim().toLowerCase(),password,options:{data:{display_name:name.trim(),name:name.trim()},emailRedirectTo:typeof window!=="undefined"?window.location.origin+"/my-courses":undefined}});
    if(error||!data.user)throw new Error(error?.message||"No se pudo crear la cuenta.");
    if(!data.session)throw new Error("Cuenta creada. Revisa tu correo y confirma la cuenta antes de iniciar sesión.");
    const {error:profileError}=await supabase.from("profiles").update({display_name:name.trim()}).eq("id",data.user.id);
