@@ -1,40 +1,47 @@
 # CBDEVS Cursos
 
-Plataforma de cursos estructurados de CBDEVS. Esta rama migra el acceso a datos y autenticación desde Firebase hacia el proyecto Supabase central compartido con CBDEVS Admin, Web y Client Portal.
+Plataforma de cursos estructurados de CBDEVS (Next.js App Router + TypeScript + Tailwind + Supabase Auth/Postgres/RLS/Storage). Comparte el proyecto Supabase central y la identidad visual con CBDEVS Admin, Web y Client Portal. Firebase no se usa ni debe reintroducirse.
 
-## Central Supabase
+## Funciones
 
-- Project reference: `rpfupihdsqxprhptxypv`
-- Browser variables: `NEXT_PUBLIC_CBDEVS_SUPABASE_URL` and `NEXT_PUBLIC_CBDEVS_SUPABASE_ANON_KEY`
-- Use only the publishable/anon key in the browser. Never expose a service-role key.
-- Course tables: `cbdevs_courses`, `cbdevs_course_phases`, `cbdevs_course_lessons`, `cbdevs_exercise_solutions`, `cbdevs_course_enrollments`, `cbdevs_course_progress`.
-- Storage bucket: `cbdevs-course-assets` (private; signed URLs expire after one hour).
+**Alumnos**
+- Registro (contraseña ≥ 12 caracteres, confirmación por correo), inicio de sesión con correo o Google y recuperación de contraseña completa en `/reset` (solicitud y nueva contraseña).
+- *Mis cursos*: cursos inscritos y publicados con portada, avance y botón “Continuar” a la siguiente lección pendiente.
+- Vista del curso con temario por fases, lecciones completadas y siguiente lección.
+- Reproductor de lección: lectura, video (YouTube/Vimeo/https), código con resaltado y copiar, ejercicios con solución liberada, quizzes con retroalimentación y recursos descargables (URLs firmadas de 1 h). Temario lateral, anterior/siguiente y “Completar y continuar”.
+- *Mi cuenta*: nombre visible y cambio de contraseña.
 
-Access is determined from Supabase Auth, organization membership, the enabled `courses` app, and active course enrollment. A signed-in user is not automatically staff. RLS enforces tenant boundaries.
+**Equipo (owner/admin/manager con la app `courses`)**
+- Cursos: búsqueda, filtros, métricas, creación como borrador, portada, publicar/despublicar (requiere al menos una lección).
+- Temario en una sola pantalla: fases y lecciones con edición, reordenamiento atómico y eliminación con confirmación (solo admin).
+- Editor de lecciones con autoguardado, aviso de cambios sin guardar, vista del alumno, duplicar/mover bloques y soluciones de ejercicios guardadas aparte.
+- Inscripciones por correo de la cuenta del alumno, baja y reactivación.
+- Alumnos: avance por alumno y curso, última actividad, búsqueda y filtro.
 
-## Roles
+## Base de datos
 
-- `owner` / `admin`: mapped to the UI's `admin` role.
-- `manager`: mapped to the UI's `empleado` role.
-- Enrolled or newly registered learners: UI `cliente` role.
-- Public registration never grants staff privileges.
+Tablas: `cbdevs_courses`, `cbdevs_course_phases`, `cbdevs_course_lessons`, `cbdevs_exercise_solutions`, `cbdevs_course_enrollments`, `cbdevs_course_progress`. Bucket privado `cbdevs-course-assets` (JPG/PNG/WebP/PDF/TXT/ZIP, 10 MB; no admite video — los videos se enlazan desde YouTube/Vimeo).
 
-## Content
+Requiere la migración `20261022233000_cbdevs_courses_enrollment_and_ordering.sql` del repositorio **cbdevs-database** (RPCs `cbdevs_enroll_course_student` y `cbdevs_swap_course_item_order`). Sin ella, inscribir y reordenar muestran “Falta aplicar una actualización de base de datos”.
 
-Course → Phases → Lessons → Blocks. Blocks support text, video, code, exercises, quizzes, and downloadable resources. Exercise solutions are visible to course staff; learners only see solutions marked released.
+## Seguridad
 
-## Local setup
+- Toda autorización la aplica Postgres (RLS); los guardias de ruta son solo UX.
+- El HTML de las lecciones se sanitiza con DOMPurify (lista blanca, solo enlaces `https:`/`mailto:`) al pegar, al guardar y al mostrar.
+- Videos: hosts exactos y IDs validados; iframes con `sandbox`. Enlaces externos solo `https` sin credenciales.
+- Las soluciones nunca se guardan en `blocks` (legible por alumnos); viven en `cbdevs_exercise_solutions` y RLS solo entrega las liberadas.
+- Los errores de base de datos se muestran con mensajes propios, sin filtrar nombres de tablas o políticas.
+- Encabezados: CSP (origen de Supabase tomado de la variable de entorno), HSTS, `X-Frame-Options: DENY`, `nosniff`.
+- Las respuestas de los quizzes van al navegador: sirven para práctica, no para evaluaciones calificadas.
 
-1. Copy `.env.example` to `.env.local`.
-2. Set `NEXT_PUBLIC_CBDEVS_SUPABASE_URL=https://rpfupihdsqxprhptxypv.supabase.co`.
-3. Set `NEXT_PUBLIC_CBDEVS_SUPABASE_ANON_KEY` to the publishable/anon key from the central project.
-4. In Supabase Auth, configure the production site URL, local redirect URL, email confirmation, password recovery redirects, and Google OAuth only if Google login is enabled.
-5. Run `npm install`, `npm run dev`, and `npm run build`.
+## Desarrollo
 
-## Migration status
+```bash
+cp .env.example .env.local   # completa la clave pública
+npm ci
+npm run dev
+npm run check   # lint + typecheck + pruebas
+npm run build
+```
 
-The central Supabase schema and RLS policies are applied, and the Supabase-only Courses code is deployed to production. The production build passed after removing Firebase runtime dependencies and correcting migration build errors. Real authentication, email confirmation/recovery, course CRUD, uploads, and RLS/IDOR behavior still require end-to-end tests because the central project currently has no Auth users, organizations, or course records.
-
-No Firebase users, course assets, enrollments, progress, or accounts were imported. Firebase SDK dependencies, config files, rules, and runtime imports were removed from this app. The old Firebase cloud project is left untouched as a separate rollback reference; it is not used by the deployed code.
-
-DetailFlow, QuoteSnap, and QuoteAI are explicitly excluded from this central project.
+En Supabase Auth configura Site URL y redirecciones para `/my-courses` y `/reset`, la confirmación por correo y Google solo si se usa.

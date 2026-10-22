@@ -1,44 +1,214 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import Prism from "prismjs";
-import "prismjs/themes/prism-tomorrow.css";
-import "prismjs/components/prism-javascript"; import "prismjs/components/prism-typescript"; import "prismjs/components/prism-markup"; import "prismjs/components/prism-css"; import "prismjs/components/prism-json"; import "prismjs/components/prism-python"; import "prismjs/components/prism-bash"; import "prismjs/components/prism-sql"; import Link from "next/link"; import { useParams } from "next/navigation"; import Guard from "@/components/Guard"; import { getExerciseSolutions, getLesson, saveExerciseSolution, saveLesson } from "@/lib/firestore/courses"; import { uploadCourseFile } from "@/lib/supabase/storage"; import type { ExerciseSolution, Lesson, LessonBlock, LessonBlockType } from "@/types/course";
-const labels: Record<LessonBlockType, string> = { text: "Texto", video: "Video", code: "Código", exercise: "Ejercicio", quiz: "Quiz", download: "Recurso descargable" };
-function createId() {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
 
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Code2, Copy, Download, Eye, FileText, HelpCircle, Lightbulb, Loader2, Pencil, PlayCircle, Trash2 } from "lucide-react";
+import Guard from "@/components/Guard";
+import { CodeForm, DownloadForm, ExerciseForm, QuizForm, TextForm, VideoForm } from "@/components/editor/BlockForms";
+import { LessonBody } from "@/components/lesson/BlockRenderer";
+import { ConfirmButton, EmptyState, ErrorBanner, Skeleton } from "@/components/ui";
+import { getCourse, getExerciseSolutions, getLesson, saveExerciseSolution, saveLesson } from "@/lib/data/courses";
+import { BLOCK_LABELS, createBlockId, makeBlock, toPublicBlocks } from "@/lib/blocks";
+import { sanitizeLessonHtml } from "@/lib/sanitize";
+import { messageOf } from "@/lib/errors";
+import type { ExerciseSolution, LessonBlock, LessonBlockType } from "@/types/course";
+
+const ICONS: Record<LessonBlockType, typeof FileText> = { text: FileText, video: PlayCircle, code: Code2, exercise: Lightbulb, quiz: HelpCircle, download: Download };
+const AUTOSAVE_MS = 1200;
+
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+type Snapshot = { content: string; solutions: Record<string, { code: string; released: boolean }> };
+
+function contentKey(title: string, description: string, blocks: LessonBlock[]) {
+  return JSON.stringify({ title, description, blocks: toPublicBlocks(blocks) });
 }
-const makeBlock = (type: LessonBlockType): LessonBlock => ({ id: createId(), type, data: type === "text" ? { html: "<h2>Nueva lectura</h2><p>Escribe aquí el contenido.</p>" } : type === "video" ? { url: "", title: "", description: "" } : type === "code" ? { language: "javascript", code: "" } : type === "exercise" ? { challenge: "", solutionCode: "", solutionReleased: false } : type === "quiz" ? { question: "", options: ["", ""], correct: 0, feedback: ["", ""] } : { name: "", url: "", path: "" } });
-export default function Editor() { return <Guard roles={["admin", "empleado"]}><Inner /></Guard> }
-function Inner() {
-    const p = useParams<{ courseId: string; phaseId: string; lessonId: string }>(); const [lesson, setLesson] = useState<Lesson | null>(null); const [solutions, setSolutions] = useState<Record<string, ExerciseSolution>>({}); const [saving, setSaving] = useState(false); const [preview, setPreview] = useState(false); const [err, setErr] = useState(""); const [dirty, setDirty] = useState(false); const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const load = async () => { try { setErr(""); const l = await getLesson(p.courseId, p.phaseId, p.lessonId); if (l) { const sols = await getExerciseSolutions(p.courseId, p.phaseId, p.lessonId); setSolutions(sols); setLesson({ ...l, blocks: l.blocks.map(b => b.type === "exercise" && sols[b.id] ? { ...b, data: { ...b.data, solutionCode: sols[b.id].code, solutionReleased: sols[b.id].released } } : b) }); } else setLesson(null); } catch (x) { setErr(x instanceof Error ? x.message : "No se pudo cargar la lección") } };
-    useEffect(() => { load(); return () => { if (timer.current) clearTimeout(timer.current) } }, [p.courseId, p.phaseId, p.lessonId]);
-    async function persist(l: Lesson) { setSaving(true); try { const publicBlocks = l.blocks.map(b => { if (b.type !== "exercise") return b; const { solutionCode: _solutionCode, ...publicData } = b.data; return { ...b, data: publicData }; }); await saveLesson(p.courseId, p.phaseId, p.lessonId, { title: l.title.trim(), description: l.description || "", blocks: publicBlocks }); for (const b of l.blocks) if (b.type === "exercise") await saveExerciseSolution(p.courseId, p.phaseId, p.lessonId, b.id, String(b.data.solutionCode || solutions[b.id]?.code || ""), Boolean(b.data.solutionReleased || solutions[b.id]?.released)); setDirty(false); } catch (x) { setErr(x instanceof Error ? x.message : "No se pudo guardar") } finally { setSaving(false) } }
-    function schedule(l: Lesson) { setDirty(true); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => persist(l), 900) }
-    function patch(patch: Partial<Lesson>) { setLesson(x => { if (!x) return x; const n = { ...x, ...patch }; schedule(n); return n }) }
-    function updateBlock(id: string, data: Record<string, unknown>) { setLesson(x => { if (!x) return x; const n = { ...x, blocks: x.blocks.map(b => b.id === id ? { ...b, data: { ...b.data, ...data } } : b) }; schedule(n); return n }) }
-    function add(type: LessonBlockType) { setLesson(x => { if (!x) return x; const n = { ...x, blocks: [...x.blocks, makeBlock(type)] }; schedule(n); return n }) }
-    function remove(id: string) { setLesson(x => { if (!x) return x; const n = { ...x, blocks: x.blocks.filter(b => b.id !== id) }; schedule(n); return n }) }
-    function move(i: number, dir: number) { setLesson(x => { if (!x) return x; const j = i + dir; if (j < 0 || j >= x.blocks.length) return x; const blocks = [...x.blocks];[blocks[i], blocks[j]] = [blocks[j], blocks[i]]; const n = { ...x, blocks }; schedule(n); return n }) }
-    function duplicate(i: number) { setLesson(x => { if (!x) return x; const b = x.blocks[i]; const n = { ...x, blocks: [...x.blocks.slice(0, i + 1), { ...b, id: createId(), data: { ...b.data } }, ...x.blocks.slice(i + 1)] }; schedule(n); return n }) }
-    if (!lesson) return <section className="stack"><Link href={`/courses/${p.courseId}/phases/${p.phaseId}`}>← Lecciones</Link>{err && <div className="error">{err}</div>}<p className="muted">Cargando…</p></section>;
-    return <section className="stack"><div className="row"><Link href={`/courses/${p.courseId}/phases/${p.phaseId}`}>← Lecciones</Link><span className="pill">{saving ? "Guardando…" : dirty ? "Cambios pendientes" : "Guardado"}</span><button className="btn" onClick={() => setPreview(v => !v)}>{preview ? "Editar" : "Vista alumno"}</button><button className="btn primary" disabled={saving} onClick={() => persist(lesson)}>Guardar ahora</button></div>{err && <div className="error">{err}</div>}{preview ? <StudentPreview lesson={lesson} /> : <><div className="card stack"><input className="input" value={lesson.title} onChange={e => patch({ title: e.target.value })} /><textarea className="input" rows={3} value={lesson.description || ""} placeholder="Descripción" onChange={e => patch({ description: e.target.value })} /></div><div className="card stack"><h2>Bloques de contenido</h2><div className="row">{(Object.keys(labels) as LessonBlockType[]).map(t => <button className="btn" key={t} onClick={() => add(t)}>+ {labels[t]}</button>)}</div>{!lesson.blocks.length && <p className="muted">Agrega un bloque para empezar.</p>}<div className="stack">{lesson.blocks.map((b, i) => <div className="block stack" key={b.id}><div className="row"><b>{i + 1}. {labels[b.type]}</b><span className="muted">{b.id.slice(0, 8)}</span><button className="btn" disabled={i === 0} onClick={() => move(i, -1)}>↑</button><button className="btn" disabled={i === lesson.blocks.length - 1} onClick={() => move(i, 1)}>↓</button><button className="btn" onClick={() => duplicate(i)}>Duplicar</button><button className="btn danger" onClick={() => remove(b.id)}>Eliminar</button></div><BlockForm courseId={p.courseId} block={b} onChange={d => updateBlock(b.id, d)} /></div>)}</div></div></>}</section>
+
+function solutionsOf(blocks: LessonBlock[]): Snapshot["solutions"] {
+  return Object.fromEntries(blocks.flatMap((b) => (b.type === "exercise" ? [[b.id, { code: b.data.solutionCode ?? "", released: b.data.solutionReleased }]] : [])));
 }
-function RichEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) { const ref = useRef<HTMLDivElement>(null); useEffect(() => { if (ref.current && ref.current.innerHTML !== value) ref.current.innerHTML = value }, [value]); const cmd = (c: string, arg?: string) => { ref.current?.focus(); document.execCommand(c, false, arg); onChange(ref.current?.innerHTML || "") }; return <div className="stack"><div className="toolbar"><button className="btn" type="button" onClick={() => cmd("bold")}>Negrita</button><button className="btn" type="button" onClick={() => cmd("italic")}>Cursiva</button><button className="btn" type="button" onClick={() => cmd("formatBlock", "h2")}>Título</button><button className="btn" type="button" onClick={() => cmd("insertUnorderedList")}>Lista</button><button className="btn" type="button" onClick={() => { const u = prompt("URL del enlace"); if (u) cmd("createLink", u) }}>Enlace</button></div><div ref={ref} className="editor" contentEditable suppressContentEditableWarning onInput={e => onChange(e.currentTarget.innerHTML)} /></div> }
-function BlockForm({ courseId, block, onChange }: { courseId: string; block: LessonBlock; onChange: (d: Record<string, unknown>) => void }) { const d = block.data; if (block.type === "text") return <RichEditor value={String(d.html || "")} onChange={html => onChange({ html })} />; if (block.type === "video") return <VideoForm courseId={courseId} data={d} onChange={onChange} />; if (block.type === "code") return <div className="stack"><select className="input" value={String(d.language || "javascript")} onChange={e => onChange({ language: e.target.value })}>{["javascript", "typescript", "html", "css", "json", "python", "bash", "sql", "java", "csharp", "php", "go", "jsx", "tsx"].map(x => <option key={x}>{x}</option>)}</select><CodeEditor language={String(d.language || "javascript")} value={String(d.code || "")} onChange={code => onChange({ code })} /></div>; if (block.type === "exercise") return <div className="stack"><textarea className="input" rows={5} placeholder="Descripción del reto" value={String(d.challenge || "")} onChange={e => onChange({ challenge: e.target.value })} /><textarea className="input code" rows={10} placeholder="Solución (se guarda separada y no se entrega al cliente)" value={String(d.solutionCode || "")} onChange={e => onChange({ solutionCode: e.target.value })} /><label><input type="checkbox" checked={Boolean(d.solutionReleased)} onChange={e => onChange({ solutionReleased: e.target.checked })} /> Liberar solución al alumno</label></div>; if (block.type === "quiz") return <QuizForm data={d} onChange={onChange} />; return <DownloadForm courseId={courseId} data={d} onChange={onChange} /> }
 
-function CodeEditor({ language, value, onChange }: { language: string; value: string; onChange: (v: string) => void }) { const grammar = (Prism.languages as Record<string, unknown>)[language] || Prism.languages.javascript; const html = Prism.highlight(value, grammar as any, language); return <div style={{ position: "relative", minHeight: 300, border: "1px solid #344550", borderRadius: 10, overflow: "hidden", background: "#0b1117" }}><pre aria-hidden="true" className="code" style={{ position: "absolute", inset: 0, margin: 0, padding: 14, overflow: "auto", pointerEvents: "none", whiteSpace: "pre-wrap", wordBreak: "break-word" }} dangerouslySetInnerHTML={{ __html: html + "\n" }} /><textarea aria-label="Editor de código" spellCheck={false} value={value} onChange={e => onChange(e.target.value)} style={{ position: "relative", width: "100%", minHeight: 300, padding: 14, border: 0, outline: 0, resize: "vertical", background: "transparent", color: "transparent", caretColor: "white", fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace", lineHeight: 1.5 }} /></div> }
-function QuizForm({ data: d, onChange }: { data: Record<string, unknown>; onChange: (x: Record<string, unknown>) => void }) { const options = Array.isArray(d.options) ? d.options.map(String) : ["", "", ""]; const feedback = Array.isArray(d.feedback) ? d.feedback.map(String) : options.map(() => ""); return <div className="stack"><input className="input" placeholder="Pregunta" value={String(d.question || "")} onChange={e => onChange({ question: e.target.value })} />{options.map((o, i) => <div className="two" key={i}><input className="input" placeholder={`Opción ${i + 1}`} value={o} onChange={e => { const a = [...options]; a[i] = e.target.value; onChange({ options: a }) }} /><input className="input" placeholder="Feedback opcional" value={feedback[i] || ""} onChange={e => { const a = [...feedback]; a[i] = e.target.value; onChange({ feedback: a }) }} /></div>)}<label className="label">Respuesta correcta<select className="input" value={Number(d.correct || 0)} onChange={e => onChange({ correct: Number(e.target.value) })}>{options.map((_, i) => <option value={i} key={i}>{i + 1}</option>)}</select></label></div> }
+function Editor() {
+  const { courseId, phaseId, lessonId } = useParams<{ courseId: string; phaseId: string; lessonId: string }>();
+  const [loaded, setLoaded] = useState<"loading" | "ready" | "missing">("loading");
+  const [organizationId, setOrganizationId] = useState("");
+  const [courseTitle, setCourseTitle] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [blocks, setBlocks] = useState<LessonBlock[]>([]);
+  const [preview, setPreview] = useState(false);
+  const [state, setState] = useState<SaveState>("idle");
+  const [error, setError] = useState("");
+  const saved = useRef<Snapshot>({ content: "", solutions: {} });
+  const saving = useRef(false);
+  const pending = useRef(false);
+  const latest = useRef({ title, description, blocks });
+  latest.current = { title, description, blocks };
 
-function VideoForm({ courseId, data: d, onChange }: { courseId: string; data: Record<string, unknown>; onChange: (x: Record<string, unknown>) => void }) { const [busy, setBusy] = useState(false); const [err, setErr] = useState(""); return <div className="stack"><input className="input" placeholder="URL de YouTube o Vimeo" value={String(d.url || "")} onChange={e => onChange({ url: e.target.value, type: "external" })} /><input className="input" placeholder="Título opcional" value={String(d.title || "")} onChange={e => onChange({ title: e.target.value })} /><textarea className="input" placeholder="Descripción opcional" value={String(d.description || "")} onChange={e => onChange({ description: e.target.value })} /><label className="label">O subir video<input className="input" type="file" accept="video/*" onChange={async e => { const f = e.target.files?.[0]; if (!f) return; setBusy(true); setErr(""); try { const up = await uploadCourseFile(f, `course-files/${courseId}/${createId()}-${f.name}`); onChange({ url: up.url, path: up.path, type: "file" }) } catch (x) { setErr(x instanceof Error ? x.message : "No se pudo subir el video") } finally { setBusy(false) } }} /></label>{busy && <span className="muted">Subiendo video…</span>}{err && <div className="error">{err}</div>}</div> }
-function DownloadForm({ courseId, data: d, onChange }: { courseId: string; data: Record<string, unknown>; onChange: (x: Record<string, unknown>) => void }) { const [busy, setBusy] = useState(false); const [err, setErr] = useState(""); return <div className="stack"><input className="input" placeholder="Nombre del recurso" value={String(d.name || "")} onChange={e => onChange({ name: e.target.value })} /><input className="input" placeholder="Enlace externo (opcional)" value={String(d.url || "")} onChange={e => onChange({ url: e.target.value })} /><label className="label">O subir archivo<input className="input" type="file" onChange={async e => { const f = e.target.files?.[0]; if (!f) return; setBusy(true); setErr(""); try { const up = await uploadCourseFile(f, `course-files/${courseId}/${createId()}-${f.name}`); onChange({ url: up.url, path: up.path, name: String(d.name || f.name) }) } catch (x) { setErr(x instanceof Error ? x.message : "No se pudo subir") } finally { setBusy(false) } }} /></label>{busy && <span className="muted">Subiendo…</span>}{err && <div className="error">{err}</div>}</div> }
-function StudentPreview({ lesson }: { lesson: Lesson }) { return <div className="card stack"><h1>{lesson.title}</h1>{String(lesson.description || "") && <p className="muted">{String(lesson.description || "")}</p>}{lesson.blocks.map(b => <div className="block" key={b.id}><RenderBlock block={b} /></div>)}</div> }
-function RenderBlock({ block }: { block: LessonBlock }) { const d = block.data; if (block.type === "text") return <div dangerouslySetInnerHTML={{ __html: String(d.html || "") }} />; if (block.type === "code") return <pre className="code">{String(d.code || "")}</pre>; if (block.type === "video") return <div><h3>{String(d.title || "")}</h3><Video url={String(d.url || "")} />{String(d.description || "") && <p className="muted">{String(d.description || "")}</p>}</div>; if (block.type === "exercise") return <div><h3>Ejercicio</h3><p>{String(d.challenge || "")}</p></div>; if (block.type === "quiz") return <div><h3>{String(d.question || "")}</h3><ul>{(Array.isArray(d.options) ? d.options : []).map((x, i) => <li key={i}>{String(x)}</li>)}</ul></div>; return <a href={String(d.url || "")} target="_blank" rel="noreferrer">{String(d.name || "Abrir recurso")}</a> }
-function Video({ url }: { url: string }) { if (url.match(/\.(mp4|webm|ogg)(\?|$)/i)) return <video src={url} controls style={{ width: "100%", borderRadius: 12 }} />; let src = ""; try { const u = new URL(url); if (u.hostname.includes("youtube.com")) { const id = u.searchParams.get("v"); if (id) src = `https://www.youtube.com/embed/${id}`; } else if (u.hostname.includes("youtu.be")) src = `https://www.youtube.com/embed/${u.pathname.slice(1)}`; else if (u.hostname.includes("vimeo.com")) src = `https://player.vimeo.com/video/${u.pathname.split("/").filter(Boolean).pop()}`; } catch { } if (!src) return url ? <a href={url} target="_blank" rel="noreferrer">Abrir video</a> : <span className="muted">Sin video</span>; return <iframe title="Video" src={src} style={{ width: "100%", aspectRatio: "16/9", border: 0, borderRadius: 12 }} allowFullScreen /> }
+  useEffect(() => {
+    let active = true;
+    Promise.all([getLesson(courseId, phaseId, lessonId), getCourse(courseId), getExerciseSolutions(courseId, phaseId, lessonId)]).then(([lesson, course, solutions]) => {
+      if (!active) return;
+      if (!lesson || !course) { setLoaded("missing"); return; }
+      const merged = lesson.blocks.map((b) => (b.type === "exercise" ? { ...b, data: { ...b.data, solutionCode: solutions[b.id]?.code ?? "", solutionReleased: solutions[b.id]?.released ?? b.data.solutionReleased } } : b));
+      setOrganizationId(course.organizationId);
+      setCourseTitle(course.title);
+      setTitle(lesson.title);
+      setDescription(lesson.description);
+      setBlocks(merged);
+      saved.current = { content: contentKey(lesson.title, lesson.description, merged), solutions: solutionsOf(merged) };
+      setLoaded("ready");
+    }).catch((cause) => { if (active) { setError(messageOf(cause, "No se pudo cargar la lección.")); setLoaded("missing"); } });
+    return () => { active = false; };
+  }, [courseId, phaseId, lessonId]);
+
+  const dirty = loaded === "ready" && (contentKey(title, description, blocks) !== saved.current.content || JSON.stringify(solutionsOf(blocks)) !== JSON.stringify(saved.current.solutions));
+
+  /** Saves the latest state; if edits arrive mid-save, runs once more afterwards. */
+  const save = useCallback(async () => {
+    if (saving.current) { pending.current = true; return; }
+    saving.current = true;
+    setState("saving");
+    setError("");
+    try {
+      do {
+        pending.current = false;
+        const snap = latest.current;
+        if (!snap.title.trim()) throw new Error("title");
+        const cleanBlocks = snap.blocks.map((b) => (b.type === "text" ? { ...b, data: { html: sanitizeLessonHtml(b.data.html) } } : b));
+        const key = contentKey(snap.title, snap.description, snap.blocks);
+        if (key !== saved.current.content) {
+          await saveLesson(courseId, phaseId, lessonId, { title: snap.title, description: snap.description, blocks: cleanBlocks });
+          saved.current = { ...saved.current, content: key };
+        }
+        const next = solutionsOf(snap.blocks);
+        for (const [blockId, solution] of Object.entries(next)) {
+          const before = saved.current.solutions[blockId];
+          if (before && before.code === solution.code && before.released === solution.released) continue;
+          if (!before && !solution.code && !solution.released) continue;
+          await saveExerciseSolution(organizationId, courseId, phaseId, lessonId, blockId, solution.code, solution.released);
+          saved.current = { ...saved.current, solutions: { ...saved.current.solutions, [blockId]: solution } };
+        }
+        // Everything in `next` is now persisted (or empty); removed exercises no longer count as changes.
+        saved.current = { ...saved.current, solutions: next };
+      } while (pending.current);
+      setState("saved");
+    } catch (cause) {
+      setState("error");
+      setError(cause instanceof Error && cause.message === "title" ? "La lección necesita un título." : messageOf(cause, "No se pudo guardar. Tus cambios siguen en pantalla; inténtalo de nuevo."));
+    } finally {
+      saving.current = false;
+    }
+  }, [courseId, phaseId, lessonId, organizationId]);
+
+  // Debounced autosave.
+  useEffect(() => {
+    if (!dirty) return;
+    setState((s) => (s === "saving" ? s : "dirty"));
+    const timer = window.setTimeout(() => { void save(); }, AUTOSAVE_MS);
+    return () => window.clearTimeout(timer);
+  }, [dirty, title, description, blocks, save]);
+
+  // Warn before leaving with unsaved changes.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  const update = (id: string, patch: Record<string, unknown>) =>
+    setBlocks((list) => list.map((b) => (b.id === id ? ({ ...b, data: { ...b.data, ...patch } } as LessonBlock) : b)));
+  const move = (index: number, dir: -1 | 1) => setBlocks((list) => {
+    const target = index + dir;
+    if (target < 0 || target >= list.length) return list;
+    const next = [...list];
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+  });
+  const duplicate = (index: number) => setBlocks((list) => [...list.slice(0, index + 1), { ...list[index], id: createBlockId(), data: structuredClone(list[index].data) } as LessonBlock, ...list.slice(index + 1)]);
+  const add = (type: LessonBlockType) => setBlocks((list) => [...list, makeBlock(type)]);
+
+  const previewSolutions = useMemo<Record<string, ExerciseSolution>>(() => Object.fromEntries(blocks.flatMap((b) => (b.type === "exercise" && b.data.solutionReleased ? [[b.id, { id: b.id, code: b.data.solutionCode ?? "", released: true }]] : []))), [blocks]);
+
+  if (loaded === "loading") return <div className="space-y-4" aria-busy="true"><Skeleton className="h-20" /><Skeleton className="h-96" /></div>;
+  if (loaded === "missing") return <EmptyState icon={FileText} title="Lección no encontrada" description={error || "La lección no existe o no tienes acceso."} action={<Link className="btn-ghost" href={`/courses/${courseId}`}>Volver al curso</Link>} />;
+
+  const status = {
+    idle: { icon: CheckCircle2, text: "Sin cambios", cls: "text-cb-muted" },
+    dirty: { icon: Pencil, text: "Cambios sin guardar", cls: "text-cb-amber" },
+    saving: { icon: Loader2, text: "Guardando…", cls: "text-cb-amber" },
+    saved: { icon: CheckCircle2, text: "Guardado", cls: "text-emerald-300" },
+    error: { icon: AlertTriangle, text: "Error al guardar", cls: "text-red-300" },
+  }[dirty && state !== "saving" && state !== "error" ? "dirty" : state];
+  const StatusIcon = status.icon;
+
+  return (
+    <div className="space-y-6">
+      <div className="sticky top-14 z-10 -mx-4 flex flex-wrap items-center gap-3 border-b border-cb-line bg-cb-bg/90 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:top-0 lg:-mx-10 lg:px-10">
+        <Link className="inline-flex items-center gap-1.5 text-sm text-cb-muted hover:text-white" href={`/courses/${courseId}#phase-${phaseId}`}><ArrowLeft size={15} aria-hidden /><span className="max-w-[200px] truncate">{courseTitle}</span></Link>
+        <span className={`ml-auto flex items-center gap-1.5 text-xs ${status.cls}`} role="status" aria-live="polite"><StatusIcon size={14} className={state === "saving" ? "animate-spin" : ""} aria-hidden />{status.text}</span>
+        <button type="button" className="btn-ghost" onClick={() => setPreview((v) => !v)} aria-pressed={preview}>{preview ? <><Pencil size={15} aria-hidden />Editar</> : <><Eye size={15} aria-hidden />Vista del alumno</>}</button>
+        <button type="button" className="btn-primary" disabled={!dirty || state === "saving"} onClick={() => void save()}>Guardar</button>
+      </div>
+
+      <ErrorBanner>{error}</ErrorBanner>
+
+      {preview ? (
+        <article className="mx-auto max-w-3xl space-y-8">
+          <header><div className="mono-label">Vista previa</div><h1 className="mt-2 text-3xl font-bold tracking-tight">{title || "Sin título"}</h1>{description && <p className="mt-2 text-cb-muted">{description}</p>}</header>
+          <LessonBody blocks={blocks} solutions={previewSolutions} />
+        </article>
+      ) : (
+        <div className="mx-auto max-w-4xl space-y-6">
+          <section className="panel space-y-4 p-5">
+            <label className="block"><span className="label">Título de la lección</span><input className="input text-lg font-semibold" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required /></label>
+            <label className="block"><span className="label">Resumen (opcional)</span><textarea className="input" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} placeholder="Qué aprenderá el alumno en esta lección." /></label>
+          </section>
+
+          {blocks.length === 0 && <EmptyState icon={FileText} title="Lección vacía" description="Agrega bloques de lectura, video, código, ejercicios, quizzes o recursos descargables." />}
+
+          {blocks.map((block, index) => {
+            const Icon = ICONS[block.type];
+            return (
+              <section key={block.id} className="panel overflow-hidden" aria-label={`Bloque ${index + 1}: ${BLOCK_LABELS[block.type]}`}>
+                <div className="flex items-center gap-2 border-b border-cb-line bg-cb-panel2/60 px-4 py-2.5">
+                  <Icon size={16} className="text-cb-amber" aria-hidden />
+                  <span className="text-sm font-semibold">{index + 1}. {BLOCK_LABELS[block.type]}</span>
+                  <div className="ml-auto flex gap-1.5">
+                    <button type="button" className="btn-icon h-8 w-8" disabled={index === 0} onClick={() => move(index, -1)} aria-label="Subir bloque" title="Subir"><ArrowUp size={14} /></button>
+                    <button type="button" className="btn-icon h-8 w-8" disabled={index === blocks.length - 1} onClick={() => move(index, 1)} aria-label="Bajar bloque" title="Bajar"><ArrowDown size={14} /></button>
+                    <button type="button" className="btn-icon h-8 w-8" onClick={() => duplicate(index)} aria-label="Duplicar bloque" title="Duplicar"><Copy size={14} /></button>
+                    <ConfirmButton className="btn-icon h-8 w-8 hover:border-red-400/60 hover:text-red-300" title="Eliminar bloque" confirmLabel="¿Sí?" onConfirm={() => setBlocks((list) => list.filter((b) => b.id !== block.id))}><Trash2 size={14} /></ConfirmButton>
+                  </div>
+                </div>
+                <div className="p-4">
+                  {block.type === "text" && <TextForm data={block.data} onChange={(p) => update(block.id, p)} />}
+                  {block.type === "video" && <VideoForm data={block.data} onChange={(p) => update(block.id, p)} />}
+                  {block.type === "code" && <CodeForm data={block.data} onChange={(p) => update(block.id, p)} />}
+                  {block.type === "exercise" && <ExerciseForm data={block.data} onChange={(p) => update(block.id, p)} />}
+                  {block.type === "quiz" && <QuizForm data={block.data} onChange={(p) => update(block.id, p)} />}
+                  {block.type === "download" && <DownloadForm data={block.data} onChange={(p) => update(block.id, p)} courseId={courseId} />}
+                </div>
+              </section>
+            );
+          })}
+
+          <section className="panel p-4">
+            <div className="mb-3 text-sm font-medium">Agregar bloque</div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              {(Object.keys(BLOCK_LABELS) as LessonBlockType[]).map((type) => {
+                const Icon = ICONS[type];
+                return <button key={type} type="button" className="flex flex-col items-center gap-2 rounded-xl border border-cb-line bg-cb-bg p-3 text-xs font-medium text-slate-300 transition hover:border-cb-amber/60 hover:text-white" onClick={() => add(type)}><Icon size={18} className="text-cb-amber" aria-hidden />{BLOCK_LABELS[type]}</button>;
+              })}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function LessonEditorPage() {
+  return <Guard roles={["admin", "empleado"]}><Editor /></Guard>;
+}
