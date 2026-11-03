@@ -1,3 +1,17 @@
-"use client"; import {useEffect,useState} from "react"; import Link from "next/link"; import {useParams} from "next/navigation"; import Guard from "@/components/Guard"; import {listLessons,createLesson,deleteLesson} from "@/lib/firestore/courses"; import type {Lesson} from "@/types/course";
-export default function Phase(){return <Guard roles={["admin","empleado"]}><Inner/></Guard>}function Inner(){const p=useParams<{courseId:string;phaseId:string}>();const [rows,setRows]=useState<Lesson[]>([]);const [title,setTitle]=useState("");const [desc,setDesc]=useState("");const [err,setErr]=useState("");const load=()=>listLessons(p.courseId,p.phaseId).then(setRows).catch(x=>setErr(x instanceof Error?x.message:"No se pudieron cargar las lecciones"));useEffect(()=>{load()},[p.courseId,p.phaseId]);async function add(){if(!title.trim())return;try{const id=await createLesson(p.courseId,p.phaseId,{title,description:desc,order:rows.length,blocks:[]});setTitle("");setDesc("");await load();location.href=`/courses/${p.courseId}/phases/${p.phaseId}/lessons/${id}`}catch(x){setErr(x instanceof Error?x.message:"No se pudo crear la lección")}}async function move(i:number,dir:number){const j=i+dir;if(j<0||j>=rows.length)return;const {updateLessonOrder}=await import("@/lib/firestore/lesson-order");await updateLessonOrder(p.courseId,p.phaseId,rows[i].id,j);await updateLessonOrder(p.courseId,p.phaseId,rows[j].id,i);load();}
-return <section className="stack"><div><Link href={`/courses/${p.courseId}`}>← Curso</Link><h1 className="title">Lecciones</h1></div><div className="card stack"><input className="input" placeholder="Nueva lección" value={title} onChange={e=>setTitle(e.target.value)}/><textarea className="input" placeholder="Descripción" value={desc} onChange={e=>setDesc(e.target.value)}/><button className="btn primary" onClick={add}>+ Agregar lección</button></div>{err&&<div className="error">{err}</div>}<div className="list">{rows.map((x,i)=><div className="item" key={x.id}><Link style={{flex:1}} href={`/courses/${p.courseId}/phases/${p.phaseId}/lessons/${x.id}`}><b>{i+1}. {x.title}</b><div className="muted">{x.blocks?.length||0} bloques</div></Link><div className="row"><button className="btn" disabled={i===0} onClick={()=>move(i,-1)}>↑</button><button className="btn" disabled={i===rows.length-1} onClick={()=>move(i,1)}>↓</button><button className="btn danger" onClick={async()=>{if(confirm("¿Eliminar esta lección?")){await deleteLesson(p.courseId,p.phaseId,x.id);load()}}}>Eliminar</button></div></div>)}</div></section>}
+"use client";
+
+import { useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Guard from "@/components/Guard";
+
+/** Phases are managed inside the course page; keep old links working. */
+function PhaseRedirect() {
+  const { courseId, phaseId } = useParams<{ courseId: string; phaseId: string }>();
+  const router = useRouter();
+  useEffect(() => { router.replace(`/courses/${courseId}#phase-${phaseId}`); }, [courseId, phaseId, router]);
+  return null;
+}
+
+export default function PhasePage() {
+  return <Guard roles={["admin", "empleado"]}><PhaseRedirect /></Guard>;
+}
